@@ -58,7 +58,7 @@ func displayInfo(info printInfo) error {
 		return err
 	}
 
-	_, err = fmt.Fprintf(os.Stderr, "%s\n", out)
+	_, err = fmt.Fprintln(os.Stdout, string(out))
 
 	return err
 }
