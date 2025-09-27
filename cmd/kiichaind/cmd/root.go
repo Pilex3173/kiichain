@@ -77,65 +77,90 @@ type CustomAppConfig struct {
 	Wasm wasmtypes.NodeConfig `mapstructure:"wasm"`
 }
 
-// NewRootCmd creates a new root command for simd. It is called once in the
-// main function.
+// NewRootCmd creatt root command for kiichaind
 func NewRootCmd() *cobra.Command {
-	// we "pre"-instantiate the application for getting the injected/configured encoding configuration
-	initAppOptions := viper.New()
-	tempDir := tempDir()
-	initAppOptions.Set(flags.FlagHome, tempDir)
-	tempApplication := kiichain.NewKiichainApp(
-		log.NewNopLogger(),
-		dbm.NewMemDB(),
-		nil,
-		true,
-		map[int64]bool{},
-		tempDir,
-		initAppOptions,
-		kiichain.EmptyWasmOptions,
-		kiichain.EVMAppOptions,
-	)
-	defer func() {
-		if err := tempApplication.Close(); err != nil {
-			panic(err)
-		}
-		if tempDir != kiichain.DefaultNodeHome {
-			os.RemoveAll(tempDir)
-		}
-	}()
+    initAppOptions := viper.New()
+    temp := tempDir()
+    initAppOptions.Set(flags.FlagHome, temp)
 
-	initClientCtx := client.Context{}.
-		WithCodec(tempApplication.AppCodec()).
-		WithInterfaceRegistry(tempApplication.InterfaceRegistry()).
-		WithLegacyAmino(tempApplication.LegacyAmino()).
-		WithInput(os.Stdin).
-		WithAccountRetriever(types.AccountRetriever{}).
-		WithHomeDir(kiichain.DefaultNodeHome).
-		WithViper("").
-		// EVM config
-		WithBroadcastMode(flags.FlagBroadcastMode).
-		WithKeyringOptions(evmkeyring.Option()).
-		WithLedgerHasProtobuf(true)
+    tempApp := kiichain.NewKiichainApp(
+        log.NewNopLogger(),
+        dbm.NewMemDB(),
+        nil,
+        true,
+        map[int64]bool{},
+        temp,
+        initAppOptions,
+        kiichain.EmptyWasmOptions,
+        kiichain.EVMAppOptions,
+    )
+    defer func() {
+        _ = tempApp.Close()
+        if temp != kiichain.DefaultNodeHome {
+            _ = os.RemoveAll(temp) // bersihkan manual setelah dipakai
+        }
+    }()
 
-	rootCmd := &cobra.Command{
-		Use:   "kiichaind",
-		Short: "Kiichain App",
-		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			cmd.SetOut(cmd.OutOrStdout())
-			cmd.SetErr(cmd.ErrOrStderr())
+    initClientCtx := client.Context{}.
+        WithCodec(tempApp.AppCodec()).
+        WithInterfaceRegistry(tempApp.InterfaceRegistry()).
+        WithLegacyAmino(tempApp.LegacyAmino()).
+        WithInput(os.Stdin).
+        WithAccountRetriever(types.AccountRetriever{}).
+        WithHomeDir(kiichain.DefaultNodeHome).
+        WithViper("").
+        WithKeyringOptions(evmkeyring.Option()).
+        WithLedgerHasProtobuf(true)
 
-			// Set the client context on the command
-			initClientCtx = initClientCtx.WithCmdContext(cmd.Context())
-			initClientCtx, err := client.ReadPersistentCommandFlags(initClientCtx, cmd.Flags())
-			if err != nil {
-				return err
-			}
+    rootCmd := &cobra.Command{
+        Use:   "kiichaind",
+        Short: "Kiichain App",
+        PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+            cmd.SetOut(cmd.OutOrStdout())
+            cmd.SetErr(cmd.ErrOrStderr())
 
-			initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
-			if err != nil {
-				return err
-			}
+            var err error
+            initClientCtx, err = client.ReadPersistentCommandFlags(initClientCtx, cmd.Flags())
+            if err != nil {
+                return err
+            }
 
+            initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
+            if err != nil {
+                return err
+            }
+
+            if !initClientCtx.Offline {
+                txConfigOpts := tx.ConfigOptions{
+                    EnabledSignModes:           append(tx.DefaultSignModes, signing.SignMode_SIGN_MODE_TEXTUAL),
+                    TextualCoinMetadataQueryFn: authtxconfig.NewGRPCCoinMetadataQueryFn(initClientCtx),
+                }
+                txConfigWithTextual, err := tx.NewTxConfigWithOptions(initClientCtx.Codec, txConfigOpts)
+                if err != nil {
+                    return err
+                }
+                initClientCtx = initClientCtx.WithTxConfig(txConfigWithTextual)
+            }
+
+            if err := client.SetCmdClientContextHandler(initClientCtx, cmd); err != nil {
+                return err
+            }
+
+            appTemplate, appConfig := initAppConfig(kiichain.KiichainID)
+            cometCfg := initCometConfig()
+
+            return server.InterceptConfigsPreRunHandler(cmd, appTemplate, appConfig, cometCfg)
+        },
+    }
+
+    initRootCmd(rootCmd, tempApp.ModuleBasics, tempApp.AppCodec(), tempApp.InterfaceRegistry(), tempApp.GetTxConfig())
+
+    if err := enrichAutoCliOpts(tempApp.AutoCliOpts(), initClientCtx).EnhanceRootCommand(rootCmd); err != nil {
+        panic(err)
+    }
+
+    return rootCmd
+}
 			// This needs to go after ReadFromClientConfig, as that function
 			// sets the RPC client needed for SIGN_MODE_TEXTUAL. This sign mode
 			// is only available if the client is online.
@@ -274,11 +299,12 @@ func initRootCmd(rootCmd *cobra.Command,
 	rootCmd.AddCommand(rosettaCmd.RosettaCommand(interfaceRegistry, cdc))
 
 	// Add tx flags
-	var err error
-	_, err = srvflags.AddTxFlags(rootCmd)
-	if err != nil {
-		panic(err)
-	}
+	var tempDir = func() string {
+    dir, err := os.MkdirTemp("", ".kiichain")
+    if err != nil {
+        panic(fmt.Sprintf("failed create folder temp: %s", err.Error()))
+    }
+    return dir
 }
 
 func addModuleInitFlags(startCmd *cobra.Command) {
