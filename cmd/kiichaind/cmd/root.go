@@ -77,124 +77,86 @@ type CustomAppConfig struct {
 	Wasm wasmtypes.NodeConfig `mapstructure:"wasm"`
 }
 
-// NewRootCmd creatt root command for kiichaind
+// NewRootCmd creates root command for kiichaind
 func NewRootCmd() *cobra.Command {
-    initAppOptions := viper.New()
-    temp := tempDir()
-    initAppOptions.Set(flags.FlagHome, temp)
+	initAppOptions := viper.New()
+	temp := createTempDir()
+	initAppOptions.Set(flags.FlagHome, temp)
 
-    tempApp := kiichain.NewKiichainApp(
-        log.NewNopLogger(),
-        dbm.NewMemDB(),
-        nil,
-        true,
-        map[int64]bool{},
-        temp,
-        initAppOptions,
-        kiichain.EmptyWasmOptions,
-        kiichain.EVMAppOptions,
-    )
-    defer func() {
-        _ = tempApp.Close()
-        if temp != kiichain.DefaultNodeHome {
-            _ = os.RemoveAll(temp) // bersihkan manual setelah dipakai
-        }
-    }()
+	tempApp := kiichain.NewKiichainApp(
+		log.NewNopLogger(),
+		dbm.NewMemDB(),
+		nil,
+		true,
+		map[int64]bool{},
+		temp,
+		initAppOptions,
+		kiichain.EmptyWasmOptions,
+		kiichain.EVMAppOptions,
+	)
+	defer func() {
+		_ = tempApp.Close()
+		if temp != kiichain.DefaultNodeHome {
+			_ = os.RemoveAll(temp) // cleanup temp dir
+		}
+	}()
 
-    initClientCtx := client.Context{}.
-        WithCodec(tempApp.AppCodec()).
-        WithInterfaceRegistry(tempApp.InterfaceRegistry()).
-        WithLegacyAmino(tempApp.LegacyAmino()).
-        WithInput(os.Stdin).
-        WithAccountRetriever(types.AccountRetriever{}).
-        WithHomeDir(kiichain.DefaultNodeHome).
-        WithViper("").
-        WithKeyringOptions(evmkeyring.Option()).
-        WithLedgerHasProtobuf(true)
+	initClientCtx := client.Context{}.
+		WithCodec(tempApp.AppCodec()).
+		WithInterfaceRegistry(tempApp.InterfaceRegistry()).
+		WithLegacyAmino(tempApp.LegacyAmino()).
+		WithInput(os.Stdin).
+		WithAccountRetriever(types.AccountRetriever{}).
+		WithHomeDir(kiichain.DefaultNodeHome).
+		WithViper("").
+		WithKeyringOptions(evmkeyring.Option()).
+		WithLedgerHasProtobuf(true)
 
-    rootCmd := &cobra.Command{
-        Use:   "kiichaind",
-        Short: "Kiichain App",
-        PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-            cmd.SetOut(cmd.OutOrStdout())
-            cmd.SetErr(cmd.ErrOrStderr())
+	rootCmd := &cobra.Command{
+		Use:   "kiichaind",
+		Short: "Kiichain App",
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SetOut(cmd.OutOrStdout())
+			cmd.SetErr(cmd.ErrOrStderr())
 
-            var err error
-            initClientCtx, err = client.ReadPersistentCommandFlags(initClientCtx, cmd.Flags())
-            if err != nil {
-                return err
-            }
+			var err error
+			initClientCtx, err = client.ReadPersistentCommandFlags(initClientCtx, cmd.Flags())
+			if err != nil {
+				return err
+			}
 
-            initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
-            if err != nil {
-                return err
-            }
+			initClientCtx, err = config.ReadFromClientConfig(initClientCtx)
+			if err != nil {
+				return err
+			}
 
-            if !initClientCtx.Offline {
-                txConfigOpts := tx.ConfigOptions{
-                    EnabledSignModes:           append(tx.DefaultSignModes, signing.SignMode_SIGN_MODE_TEXTUAL),
-                    TextualCoinMetadataQueryFn: authtxconfig.NewGRPCCoinMetadataQueryFn(initClientCtx),
-                }
-                txConfigWithTextual, err := tx.NewTxConfigWithOptions(initClientCtx.Codec, txConfigOpts)
-                if err != nil {
-                    return err
-                }
-                initClientCtx = initClientCtx.WithTxConfig(txConfigWithTextual)
-            }
-
-            if err := client.SetCmdClientContextHandler(initClientCtx, cmd); err != nil {
-                return err
-            }
-
-            appTemplate, appConfig := initAppConfig(kiichain.KiichainID)
-            cometCfg := initCometConfig()
-
-            return server.InterceptConfigsPreRunHandler(cmd, appTemplate, appConfig, cometCfg)
-        },
-    }
-
-    initRootCmd(rootCmd, tempApp.ModuleBasics, tempApp.AppCodec(), tempApp.InterfaceRegistry(), tempApp.GetTxConfig())
-
-    if err := enrichAutoCliOpts(tempApp.AutoCliOpts(), initClientCtx).EnhanceRootCommand(rootCmd); err != nil {
-        panic(err)
-    }
-
-    return rootCmd
-}
-			// This needs to go after ReadFromClientConfig, as that function
-			// sets the RPC client needed for SIGN_MODE_TEXTUAL. This sign mode
-			// is only available if the client is online.
+			// Only enable SIGN_MODE_TEXTUAL if online
 			if !initClientCtx.Offline {
 				txConfigOpts := tx.ConfigOptions{
 					EnabledSignModes:           append(tx.DefaultSignModes, signing.SignMode_SIGN_MODE_TEXTUAL),
 					TextualCoinMetadataQueryFn: authtxconfig.NewGRPCCoinMetadataQueryFn(initClientCtx),
 				}
-				txConfigWithTextual, err := tx.NewTxConfigWithOptions(
-					initClientCtx.Codec,
-					txConfigOpts,
-				)
+				txConfigWithTextual, err := tx.NewTxConfigWithOptions(initClientCtx.Codec, txConfigOpts)
 				if err != nil {
 					return err
 				}
 				initClientCtx = initClientCtx.WithTxConfig(txConfigWithTextual)
 			}
 
-			if err = client.SetCmdClientContextHandler(initClientCtx, cmd); err != nil {
+			if err := client.SetCmdClientContextHandler(initClientCtx, cmd); err != nil {
 				return err
 			}
 
-			customAppTemplate, customAppConfig := initAppConfig(kiichain.KiichainID)
-			customCometConfig := initCometConfig()
+			appTemplate, appConfig := initAppConfig(kiichain.KiichainID)
+			cometCfg := initCometConfig()
 
-			// Run the server intercept configs
-			return server.InterceptConfigsPreRunHandler(cmd, customAppTemplate, customAppConfig, customCometConfig)
+			return server.InterceptConfigsPreRunHandler(cmd, appTemplate, appConfig, cometCfg)
 		},
 	}
 
-	initRootCmd(rootCmd, tempApplication.ModuleBasics, tempApplication.AppCodec(), tempApplication.InterfaceRegistry(), tempApplication.GetTxConfig())
+	initRootCmd(rootCmd, tempApp.ModuleBasics, tempApp.AppCodec(), tempApp.InterfaceRegistry(), tempApp.GetTxConfig())
 
-	autoCliOpts := enrichAutoCliOpts(tempApplication.AutoCliOpts(), initClientCtx)
-	if err := autoCliOpts.EnhanceRootCommand(rootCmd); err != nil {
+	if err := enrichAutoCliOpts(tempApp.AutoCliOpts(), initClientCtx).EnhanceRootCommand(rootCmd); err != nil {
 		panic(err)
 	}
 
@@ -212,24 +174,18 @@ func enrichAutoCliOpts(autoCliOpts autocli.AppOptions, clientCtx client.Context)
 }
 
 // initCometConfig helps to override default CometBFT Config values.
-// return tmcfg.DefaultConfig if no custom configuration is required for the application.
 func initCometConfig() *tmcfg.Config {
 	cfg := tmcfg.DefaultConfig()
-
-	// these values put a higher strain on node memory
 	// cfg.P2P.MaxNumInboundPeers = 100
 	// cfg.P2P.MaxNumOutboundPeers = 40
-
 	return cfg
 }
 
 func initAppConfig(evmChainID uint64) (string, interface{}) {
-	// Can optionally overwrite the SDK's default server config.
 	srvCfg := serverconfig.DefaultConfig()
 	srvCfg.StateSync.SnapshotInterval = 1000
 	srvCfg.StateSync.SnapshotKeepRecent = 10
 
-	// Setup evm chain ID
 	evmCfg := evmserverconfig.DefaultEVMConfig()
 	evmCfg.EVMChainID = evmChainID
 
@@ -241,16 +197,14 @@ func initAppConfig(evmChainID uint64) (string, interface{}) {
 		Wasm:    wasmtypes.DefaultNodeConfig(),
 	}
 
-	// Default template
 	defaultAppTemplate := serverconfig.DefaultConfigTemplate + wasmtypes.DefaultConfigTemplate()
-
-	// EVM template
 	defaultAppTemplate += evmserverconfig.DefaultEVMConfigTemplate
 
 	return defaultAppTemplate, customAppConfig
 }
 
-func initRootCmd(rootCmd *cobra.Command,
+func initRootCmd(
+	rootCmd *cobra.Command,
 	basicManager module.BasicManager,
 	cdc codec.Codec,
 	interfaceRegistry codectypes.InterfaceRegistry,
@@ -273,7 +227,7 @@ func initRootCmd(rootCmd *cobra.Command,
 		snapshot.Cmd(sdkAppCreatorWrapper),
 	)
 
-	// EVM add commands
+	// EVM commands
 	evmserver.AddCommands(
 		rootCmd,
 		evmserver.NewDefaultStartOptions(ac.newApp, kiichain.DefaultNodeHome),
@@ -281,12 +235,12 @@ func initRootCmd(rootCmd *cobra.Command,
 		addModuleInitFlags,
 	)
 
-	// add Cosmos EVM key commands
+	// Cosmos EVM key commands
 	rootCmd.AddCommand(
 		cosmosevmcmd.KeyCommands(kiichain.DefaultNodeHome, true),
 	)
 
-	// add keybase, auxiliary RPC, query, and tx child commands
+	// keybase, RPC, query, tx
 	rootCmd.AddCommand(
 		server.StatusCommand(),
 		genesisCommand(txConfig, basicManager),
@@ -295,16 +249,8 @@ func initRootCmd(rootCmd *cobra.Command,
 		keys.Commands(),
 	)
 
-	// add rosetta
+	// Rosetta
 	rootCmd.AddCommand(rosettaCmd.RosettaCommand(interfaceRegistry, cdc))
-
-	// Add tx flags
-	var tempDir = func() string {
-    dir, err := os.MkdirTemp("", ".kiichain")
-    if err != nil {
-        panic(fmt.Sprintf("failed create folder temp: %s", err.Error()))
-    }
-    return dir
 }
 
 func addModuleInitFlags(startCmd *cobra.Command) {
@@ -312,16 +258,12 @@ func addModuleInitFlags(startCmd *cobra.Command) {
 	overrideEVMChainID(startCmd)
 }
 
-// overrideEVMChainID changes the default evm chain id
 func overrideEVMChainID(cmd *cobra.Command) {
-	// Create precheck function
 	preCheck := func(cmd *cobra.Command, _ []string) error {
-		// Read in the client context from the command line and environment variables
 		evmChainID, err := cmd.Flags().GetUint64(srvflags.EVMChainID)
 		if err != nil {
 			return err
 		}
-		// If the chain id is still default, we override it on the CLI
 		if evmChainID == evmserverconfig.DefaultEVMChainID {
 			err = cmd.Flags().Set(srvflags.EVMChainID, fmt.Sprintf("%d", kiichain.KiichainID))
 		}
@@ -331,10 +273,8 @@ func overrideEVMChainID(cmd *cobra.Command) {
 	cmd.PreRunE = chainPreRuns(preCheck, cmd.PreRunE)
 }
 
-// preRunFn defines a preRun function
 type preRunFn func(cmd *cobra.Command, args []string) error
 
-// chainPreRuns appends a preRun function to the pre run list
 func chainPreRuns(pfns ...preRunFn) preRunFn {
 	return func(cmd *cobra.Command, args []string) error {
 		for _, pfn := range pfns {
@@ -348,10 +288,8 @@ func chainPreRuns(pfns ...preRunFn) preRunFn {
 	}
 }
 
-// genesisCommand builds genesis-related `simd genesis` command. Users may provide application specific commands as a parameter
 func genesisCommand(txConfig client.TxConfig, basicManager module.BasicManager, cmds ...*cobra.Command) *cobra.Command {
 	cmd := genutilcli.GenesisCoreCommand(txConfig, basicManager, kiichain.DefaultNodeHome)
-
 	for _, subCmd := range cmds {
 		cmd.AddCommand(subCmd)
 	}
@@ -378,7 +316,6 @@ func queryCommand() *cobra.Command {
 	)
 
 	cmd.PersistentFlags().String(flags.FlagChainID, "", "The network chain ID")
-
 	return cmd
 }
 
@@ -403,10 +340,7 @@ func txCommand(basicManager module.BasicManager) *cobra.Command {
 		authcmd.GetDecodeCommand(),
 	)
 
-	// NOTE: this must be registered for now so that submit-legacy-proposal
-	// message (e.g. consumer-addition proposal) can be routed to the its handler and processed correctly.
 	basicManager.AddTxCommands(cmd)
-
 	cmd.PersistentFlags().String(flags.FlagChainID, "", "The network chain ID")
 
 	return cmd
@@ -421,7 +355,6 @@ func (a appCreator) newApp(
 	appOpts servertypes.AppOptions,
 ) evmserver.Application {
 	var cache storetypes.MultiStorePersistentCache
-
 	if cast.ToBool(appOpts.Get(server.FlagInterBlockCache)) {
 		cache = store.NewCommitKVStoreCacheManager()
 	}
@@ -441,7 +374,6 @@ func (a appCreator) newApp(
 		skipUpgradeHeights[int64(h)] = true
 	}
 
-	// Get the chain id
 	homeDir := cast.ToString(appOpts.Get(flags.FlagHome))
 	chainID, err := getChainIDFromOpts(appOpts)
 	if err != nil {
@@ -458,7 +390,6 @@ func (a appCreator) newApp(
 		panic(err)
 	}
 
-	// BaseApp Opts
 	snapshotOptions := snapshottypes.NewSnapshotOptions(
 		cast.ToUint64(appOpts.Get(server.FlagStateSyncSnapshotInterval)),
 		cast.ToUint32(appOpts.Get(server.FlagStateSyncSnapshotKeepRecent)),
@@ -508,12 +439,10 @@ func (a appCreator) appExport(
 		return servertypes.ExportedApp{}, errors.New("application home is not set")
 	}
 
-	// InvCheckPeriod
 	viperAppOpts, ok := appOpts.(*viper.Viper)
 	if !ok {
 		return servertypes.ExportedApp{}, errors.New("appOpts is not viper.Viper")
 	}
-	// overwrite the FlagInvCheckPeriod
 	viperAppOpts.Set(server.FlagInvCheckPeriod, 1)
 	appOpts = viperAppOpts
 
@@ -522,7 +451,6 @@ func (a appCreator) appExport(
 		loadLatest = true
 	}
 
-	// get the chain id
 	chainID, err := getChainIDFromOpts(appOpts)
 	if err != nil {
 		return servertypes.ExportedApp{}, err
@@ -551,32 +479,25 @@ func (a appCreator) appExport(
 	return kiichainApp.ExportAppStateAndValidators(forZeroHeight, jailAllowedAddrs, modulesToExport)
 }
 
-var tempDir = func() string {
+func createTempDir() string {
 	dir, err := os.MkdirTemp("", ".kiichain")
 	if err != nil {
 		panic(fmt.Sprintf("failed creating temp directory: %s", err.Error()))
 	}
-	defer os.RemoveAll(dir)
-
 	return dir
 }
 
-// getChainIDFromOpts returns the chain Id from app Opts
-// It first tries to get from the chainId flag, if not available
-// it will load from home
 func getChainIDFromOpts(appOpts servertypes.AppOptions) (chainID string, err error) {
 	chainID = cast.ToString(appOpts.Get(flags.FlagChainID))
 	if chainID == "" {
-		// fallback to genesis chain-id
 		homeDir := cast.ToString(appOpts.Get(flags.FlagHome))
 		genDocFile := filepath.Join(homeDir, cast.ToString(appOpts.Get("genesis_file")))
 		appGenesis, err := genutiltypes.AppGenesisFromFile(genDocFile)
 		if err != nil {
 			return "", err
 		}
-
 		chainID = appGenesis.ChainID
 	}
-
 	return
 }
+
