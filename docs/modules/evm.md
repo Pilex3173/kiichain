@@ -12,10 +12,8 @@ By integrating EVM functionality, KiiChain allows developers to deploy, call, an
 - Provides a gas model aligned with the Cosmos SDK fee system.
 
 ## Main Functions
-- **DeployContract** — Upload and initialize Solidity bytecode.
-- **CallContract** — Execute functions from existing contracts.
-- **EstimateGas** — Calculate gas cost for transactions.
-- **QueryState** — Inspect contract storage and execution traces.
+- Developers interact with the EVM module using Ethereum-compatible JSON-RPC endpoints and Cosmos SDK messages such as `MsgEthereumTx`. Contract deployment and calls follow standard Ethereum procedures.
+
 
 ## References
 - [Evmos EVM Module](https://docs.evmos.org/)
