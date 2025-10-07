@@ -20,3 +20,4 @@ This module provides a base fee adjustment mechanism that balances demand and su
 - [EIP-1559 Specification](https://eips.ethereum.org/EIPS/eip-1559)
 - [Evmos FeeMarket Module](https://docs.evmos.org/modules/feemarket/)
 - Referenced in `go.mod`
+.

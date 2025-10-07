@@ -20,3 +20,4 @@ This module bridges Cosmos and EVM token models, allowing both ERC20 and Cosmos-
 - [Evmos ERC20 Module](https://docs.evmos.org/modules/erc20/)
 - [ERC20 Standard](https://eips.ethereum.org/EIPS/eip-20)
 - Referenced in `go.mod`
+.

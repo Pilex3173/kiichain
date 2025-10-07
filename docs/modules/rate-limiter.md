@@ -19,3 +19,4 @@ This module restricts cross-chain or inter-module transfers based on predefined 
 ## References
 - [Rate Limiter Overview (Stride)](https://github.com/Stride-Labs/ibc-rate-limiting)
 - Referenced in `go.mod`
+.
